@@ -26,7 +26,7 @@ The rules given by the assignment are the following:
 
 - otherwise, a cell remains dead/dies.
 
-There could be different evolution types, according to what we define as "neighbors" of a cell. 
+There could be different evolution types, according to what we define as "neighbors" of a cell and how we decide to update the world.
 
 In fact, if we decide that we want to evaluate the state of the world "one cell after the other", then we need to do an **ordered** evolution, i.e. the evaluation of a cell depends on the state of its left neighbor and its above neighbors. 
 In this scenario, we are considering an implicitly serial procedure. 
@@ -50,10 +50,8 @@ Our program works like this:
 
 - if the user chooses to run an ordered evolution (`-r -e 0` or simply `-r`), this is simply executed in serial. This can be found in the file called `grow_ordered.c`),
 
-- if the user chooses to run a static evolution (`mpirun -np x ./main.x -r -e 1`), this could be executed both in serial (if `-np 1`) or in parallel (`-np x`, `x>1`). If the user tries to run the static evolution with a number of processes greater than the number of lines, a message error is produced, asking for a reasonable number of processes (we refer to `grow_static.c`). 
+- if the user chooses to run a static evolution (`mpirun -np x ./main.x -r -e 1`), this could be executed both in serial (if `x=1`) or in parallel (if `x>1`). If the user tries to run the static evolution with a number of processes greater than the number of lines, a message error is produced, asking for a reasonable number of processes (we refer to `grow_static.c`). 
 
-
-***evaluate world - algoritmo usato***
 
 
 
@@ -74,28 +72,27 @@ Both the run functions take as inputs the file name, the number of iterations of
 
 ### World initialization: `w_init.c`
 
-In the `main` function, the function `choose_initialization` is called. This defines a `world` of size `size*size` and of type `unsigned int`. We preferred to use `char`s instead of integers or double or whatever because they belong to the smallest type that is able to contain both `0`s and `255`s, that are the outputs of `read_write_pgm.c` functions. 
+In the `main` function, the function `choose_initialization` is called. This defines a `world` of size `size*size` and of type `unsigned char`. We preferred to use `char`s instead of integers or double or whatever because they belong to the smallest type that is able to contain both `0` and `255`, that are the outputs of `read_write_pgm.c` functions. 
 
 
-Then, if the number of processes is greater the one, a parallel function will be called. Otherwise, the program will run a serial version of that. 
+Then, if the number of processes is greater than $1$, a parallel function will be called. Otherwise, the program will run a serial version of it. 
 
 #### `initialize_serial.c`:
 
-This function takes the file name, the world and the size of a square matrix as inputs. It allocates an array of `unsigned char`s of dimension `size*size` and it fills it in the following way;
+This function takes the file name, the world and the size of a square matrix as inputs. It allocates an array of `unsigned char`s of dimension `size*size` and it fills it in the following way:
 ```
-for(long i=0; i<size*size; i++){
+for(long long i=0; i<size*size; i++){
         
     int val = rand()%100;
     
     if(val>70){
-            world[i]=MAXVAL; //white = dead
+            world[i]=MAXVAL; //white = alive
     }else{
-            world[i]=0; //black = alive
+            world[i]=0; //black = dead
     }
 }
 ```
-We chose the indexes to be `long` because `int` range is [−32,767, +32,767]: too small for our purposes. 
-
+We chose the indexes to be `long long` because `long` range is [−2,147,483,647, +2,147,483,647]: too small for our purposes. On the other hand, we did not expect `size` to exceed 2,147,483,647, so we assumed that `long` was enough for it. 
 Then we wrote that world on the `pgm` file through the `write_pgm_image` function and we freed the previously allocated space. 
 
 
@@ -113,7 +110,7 @@ int cumulative=0;
 if(pRank==0){
 	for(int i=0; i<pSize; i++){
 	
-	    smaller_size = size%pSize <= i? size/pSize: size/pSize+1;
+      smaller_size = size%pSize <= i? size/pSize: size/pSize+1;
       rcounts[i] = smaller_size*size;
       displs[i] = cumulative;
 		
@@ -122,9 +119,9 @@ if(pRank==0){
 }
 ```
 
-`rcounts` and `displs` are 2 arrays that contain respectively the number of elements that each process should be manage and the one containing the index of the starting element for each process. 
+`rcounts` and `displs` are 2 arrays containing respectively the number of elements that each process should be manage and the index of the starting element for each process. 
 
-To fill them, we can establish that if the modulus of the number of lines with respect to the number of processes is greater than the index of a process, then that process will manage that one line more. We chose to just compute this arrays with the process 0. For example, if there are 10 lines in a matrix which need to be divided between 4 processes, then the process 0 will have 3 rows, the process 1 will have 3 rows, process 2 only 2 rows, such as process 3. Then these values are multiplied by the number of elements in each row, obtaining (in the case of a square matrix) a `rcounts` array made of `30-30-20-20` elements. 
+To fill them, we can establish that if the modulus of the number of lines with respect to the number of processes is greater than the index of a process, then that process will manage one line more. We chose to just compute this arrays with the process 0. For example, if there are 10 lines in a matrix which need to be divided between 4 processes, then the process 0 will have 3 rows, the process 1 will have 3 rows, process 2 only 2 rows, such as process 3. Then these values are multiplied by the number of elements in each row, obtaining (in the case of a square matrix) a `rcounts` array made of `30-30-20-20` elements. 
 
 To compute `displs`, we just needed to cumulatively add the number of elements that are assigned to each process, in order to obtain the index of the first element of each process: `0-30-60-80`. 
 
@@ -153,7 +150,7 @@ When `run_ordered` is called, the world is read from the file called `filename` 
 Then a grow function is called on it, and it performs a number of iterations equal to the ones specified by the user (`times` variable, another `run_ordered` input parameter). At each iteration, the `update_world` function is called and the snapshot is taken only if `i%snap==0`. 
 
 
-The `updated_world` function has the aim of selecting a cell, look at its neighbors and establish whether the unit must live or die. 
+The `update_world` function has the aim of selecting a cell, look at its neighbors and establish whether the unit must live or die. 
 Since the world grid is a torus, we needed to manage the edge cells by defining as neighbors the cells in the opposite places in the matrix. 
 
 For example, in a 4x4 matrix, the cell is the 0 position has as neighbors the cells with indexes: 15, 12, 13, 3, 1, 7, 4 and 5.
@@ -190,11 +187,11 @@ This algorithm applies a correction to each cell that avoids a branch condition.
 In fact, if the first element of a 4x3 matrix is considered, its neighbors will be determined by: 
 3 (west element: `left=sizex=4`), 1 (east element), 8 (north element), 4 (south element), 11 (north-west element), 9 (north-east element), 7 (south-west element) and 5 (south-east element). 
 
-***We chose to use a lighter algorithm because ....***
-
-
+Another algorithm to evaluate the world is the following:
 
 ```
+double invsizex = 1.0/sizex;
+double invMV = 1.0/MAXVAL;
 for(unsigned int k=0; k<sizex*sizey; k++){
         long col = k%sizex;
         long r = k*invsizex;
@@ -211,7 +208,7 @@ for(unsigned int k=0; k<sizex*sizey; k++){
                   world[r_prev*sizex+col_next]+     // north-east el
                   world[r_next*sizex+col_prev]+     // south-west el
                   world[r_next*sizex+col_next];     // south-east el
-      sum = sum/MAXVAL;
+      sum = sum*invMV;
 }
 ```
 In both cases, `status` or `sum` contain the number of dead elements, as defined in `w_init.c`. 
@@ -236,10 +233,10 @@ A temporary world is created, which exceeds the real world grid because of 2 mor
 
 At this point we needed to divide the workload among processes in the exact same way as we did in `initialize_parallel.c`, but this time we sent for each process also the two additional rows. 
 
-As we said before, in a 10x10 matrix divided among 4 processes, 3 rows will be given to process 0, 3 to process 1, 2 to process 2, 2 to process 3. This time there will be 2 additional rows, so the matrix will be 12x10 and the process 0 will take 5 rows, the process 1 also 50, while the last 2 processes will take only 40 rows each. Obviously, these processes' rows will be partially overlapping: 
+As we said before, in a 10x10 matrix divided among 4 processes, 3 rows will be given to process 0, 3 to process 1, 2 to process 2, 2 to process 3. This time there will be 2 additional rows, so the matrix will be 12x10 and the process 0 will take 5 rows, the process 1 also 5, while the last 2 processes will take only 4 rows each. Obviously, these processes' rows will be partially overlapping: 
 
 
-***IMMAGINE***
+![](processes_overlap.png)
 
 
 
@@ -249,12 +246,11 @@ These two functions then call the proper routine to update the world and save th
 The update is done by using a second, auxiliary, world: at each iteration, the algorithm uses one world to read the current status, updates the status and saves the result in the other one.
 
 To avoid waste, the updated world becomes the one on which performing an evaluation, and the "old" one becomes the one on which saving the update. 
-Due to performance reasons, a double pointer is used to determine which world is the reading one and which one is the updating one. 
+A double pointer is used to determine which world is the reading one and which one is the updating one. 
 
 ```
 unsigned char * ptr1=(i%2==0)? new_world: temp_new_world; 
 unsigned char * ptr2=(i%2==0)? temp_new_world: new_world; 
-
 evaluate_world(ptr1, ptr2, size, (long)scounts[pRank]*invsize, times, pRank, pSize, &status, &req); 
 ```
 
@@ -262,7 +258,8 @@ Inside `evaluate_world`, the algorithm used to do the single update is the secon
 
 At each iteration, each process updates its group of rows (excluding the supporting rows), then `MPI_Isend` and `MPI_Recv` are used to exchange the rows between the processes so that each process will be able to have also the supporting rows updated.
 
-***IMMAGINE***
+![](refilling1.png)
+![refill](refilling2.png)
 
 
 OpenMP is also used to open parallel regions for each MPI process that will further parallelize the work in the loops.
@@ -273,14 +270,12 @@ If the number of iteration is divisible for `snap`, then the program gathers all
 if(i%snap==0){
         MPI_Barrier(MPI_COMM_WORLD);
         MPI_Gatherv(&ptr2[size], rcounts_g[pRank], MPI_UNSIGNED_CHAR, world, rcounts_g, displs_g,                                                                         MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
-
         if(pRank==0){
             char * fname = (char*)malloc(60);
             sprintf(fname, "snap/snapshot_STATIC_%03d",i+1);
 	          write_pgm_image(world, MAXVAL, size, size, fname);
             free(fname);
         }
-
 }
 ```
 
@@ -291,9 +286,9 @@ if(i%snap==0){
 Since the ordered evolution is implicitly a parallel procedure, we used only the static evolution to evaluate the scalability of our program. 
 Here we will be discussing: 
 
-- OpenMP scalability: we fixed the number of MPI tasks to 1 per socket and we increased the number of threads from 1 to 64 (the number of cores available on the socket) per socket. We used 2, 4 and 6 sockets on a $20.000$x$20.000$ matrix and we reported the behavior.
+- OpenMP scalability: we fixed the number of MPI tasks to 1 per socket and we increased the number of threads from 1 to 64 (the number of cores available on the socket) per socket. We used 1, 2, 4 and 6 sockets on $20.000$x$20.000$ and on $25.000$x$25.000$ matrices and we reported the behavior.
 
-- Strong MPI scalability: we used a $25.000$x$25.000$ matrix and we increased the number of MPI tasks by using 2 nodes. We started from 1 MPI task to $128 \cdot 2 = 256$.
+- Strong MPI scalability: we used $20.000$x$20.000$ and $25.000$x$25.000$ matrices and we increased the number of MPI tasks by using 2 nodes. We started from 1 MPI task up to $128 \cdot 2 = 256$.
 
 
 ### OpenMP scalability 
@@ -301,7 +296,7 @@ Here we will be discussing:
 
 To test our program, we had run it on ORFEO on the EPYC nodes with the following settings:
 
-- `OMP_PLACES=cores` and `OMP_PROC_BIND=close`, in order to have the maximum computational power while using cores as close as possible to maximize also the memory usage, and `OMP_NUM_THREADS` going from 1 up to 64 (the number of cores of a single socket);
+- `OMP_PLACES=cores` and `OMP_PROC_BIND=close`, in order to have the maximum computational power while using cores as close as possible to maximize also the memory usage, and `OMP_NUM_THREADS` going from 1 up to 64;
 
 - matrices with size 20.000 x 20.000, 50 iterations for each trial, each of them repeated for 5 times in order to have a mean result and trying to minimize the effect of some possible outliers;
 
@@ -312,26 +307,20 @@ To test our program, we had run it on ORFEO on the EPYC nodes with the following
 ```{r, echo=F}
 library(ggplot2)
 library(plyr)
-dataset <- read.table("~/Scrivania/robe/dataset.dat", quote="\"", comment.char="")
+dataset <- read.table("dataset.dat", quote="\"", comment.char="")
 colnames(dataset) <- c("SOCKET", "POLICY", "PLACE", "DIM", "THREADS", "TIME", "SPEEDUP")
-
-dataset2 <- read.table("~/Scrivania/robe/graph 1 - OMP - 1s.dat", quote="\"", comment.char="")
+dataset2 <- read.table("graph 1 - OMP - 1s.dat", quote="\"", comment.char="")
 dataset2 <- cbind(dataset2, rep("CLOSE", each=64), rep("CORE", each=64), rep("20k", each=64), rep(1:64))
 colnames(dataset2) <- c("SOCKET", "TIME", "POLICY", "PLACE", "DIM", "THREADS")
 dataset2 <- ddply(dataset2, .(THREADS, SOCKET, POLICY, PLACE, DIM), summarize, TIME = mean(TIME))
-
 temp_TIME <- dataset2$TIME
 SPEEDUP <- c()
-
 for(i in 1:64){
   SPEEDUP[i] <- temp_TIME[1]/temp_TIME[i]
 }
-
 dataset2 <- cbind(dataset2, SPEEDUP)
-
 dataset <- rbind(dataset, dataset2)
 dataset$SOCKET <- as.factor(dataset$SOCKET)
-
 plot01 <- ggplot(dataset, aes(x=THREADS, y=SPEEDUP, color=SOCKET)) + geom_line() + geom_point()
 plot01 + ggtitle("SOCKETS AND OMP, 20.000x20.000 matrix") + xlab("Number of threads") + ylab("Speedup") + scale_x_continuous(breaks=seq(0,64,2)) + geom_abline(intercept = 0, slope = 1, color="red", 
                  linetype="dashed")
@@ -348,11 +337,23 @@ If another matrix dimension is considered, it is possible to observe that the tw
 
 
 ```{r, echo=F}
-two_skt <- read.table("~/Scrivania/robe/graph 2 - OMP - 2s.dat", quote="\"", comment.char="")
+one_skt <- read.table("graph 2 - OMP - 1s.dat", quote="\"", comment.char="")
+one_skt <- cbind(one_skt, rep(1:64, each=5))
+colnames(one_skt) <- c("SOCKET", "TIMEs", "TIME", "THREADS")
+one_skt <- ddply(one_skt, .(THREADS, SOCKET), summarize, TIME = mean(TIME))
+temp_TIME <- one_skt$TIME
+SPEEDUP <- c()
+for(i in 1:64){
+  SPEEDUP[i] <- temp_TIME[1]/temp_TIME[i]
+}
+one_skt <- cbind(one_skt, SPEEDUP)
+
+#################################################################################################
+
+two_skt <- read.table("graph 2 - OMP - 2s.dat", quote="\"", comment.char="")
 two_skt <- cbind(two_skt, rep(1:64, each=5))
 colnames(two_skt) <- c("SOCKET", "TIMEs", "TIME", "THREADS")
 two_skt <- ddply(two_skt, .(THREADS, SOCKET), summarize, TIME = mean(TIME))
-
 temp_TIME <- two_skt$TIME
 SPEEDUP <- c()
 for(i in 1:64){
@@ -362,11 +363,10 @@ two_skt <- cbind(two_skt, SPEEDUP)
 
 #################################################################################################
 
-four_skt <- read.table("~/Scrivania/robe/graph 2 - OMP - 4s.dat", quote="\"", comment.char="")
+four_skt <- read.table("graph 2 - OMP - 4s.dat", quote="\"", comment.char="")
 four_skt <- cbind(four_skt, rep(1:64, each=5))
 colnames(four_skt) <- c("SOCKET", "TIMEs", "TIME", "THREADS")
 four_skt <- ddply(four_skt, .(THREADS, SOCKET), summarize, TIME = mean(TIME))
-
 temp_TIME <- four_skt$TIME
 SPEEDUP <- c()
 for(i in 1:64){
@@ -376,37 +376,31 @@ four_skt <- cbind(four_skt, SPEEDUP)
 
 #################################################################################################
 
-six_skt <- read.table("~/Scrivania/robe/graph 2 - OMP - 6s.dat", quote="\"", comment.char="")
+six_skt <- read.table("graph 2 - OMP - 6s.dat", quote="\"", comment.char="")
 six_skt <- cbind(six_skt, rep(1:64, each=5))
 colnames(six_skt) <- c("SOCKET", "TIMEs", "TIME", "THREADS")
 six_skt <- ddply(six_skt, .(THREADS, SOCKET), summarize, TIME = mean(TIME))
-
 temp_TIME <- six_skt$TIME
 SPEEDUP <- c()
 for(i in 1:64){
   SPEEDUP[i] <- temp_TIME[1]/temp_TIME[i]
 }
 six_skt <- cbind(six_skt, SPEEDUP)
-
 #################################################################################################
 
-dataset2_omp <- rbind(two_skt, four_skt, six_skt)
+dataset2_omp <- rbind(one_skt, two_skt, four_skt, six_skt)
 dataset2_omp$SOCKET <- as.factor(dataset2_omp$SOCKET)
-
 plot02 <- ggplot(dataset2_omp, aes(x=THREADS, y=SPEEDUP, color=SOCKET)) + geom_line() + geom_point()
 plot02 + ggtitle("SOCKETS AND OMP, 25.000x25.000 matrix") + xlab("Number of threads") + ylab("Speedup") + scale_x_continuous(breaks=seq(0,64,2)) + geom_abline(intercept = 0, slope = 1, color="red", 
                  linetype="dashed")
 ```
-
-
-***cercare di mettere nello stesso colore le stesse entità, qua 1s in 20.000 è rosa come 2s in 25.000. è una roba da nulla ma mi turba in fase di letturaaaa***
 
 ### MPI scalability 
 
 We tested how `grow_static.c` functions are able to scale when invoked on a growing number of MPI tasks. 
 We had only 2 nodes available, so we decided to test the program with a number of MPI tasks from 1 to 256. 
 
-Some implementation notes: we wrote a `run_static` function such that is process 0's business to initialize the temporary world, containing 2 extra rows, and to scatter the correct rows to each process. 
+Some implementation notes: we wrote a `run_static` function where it is process 0's business to initialize the temporary world, containing 2 extra rows, and to scatter the correct rows to each process. 
 
 We measured with an increasing number of MPI tasks two entities: the overall time necessary to perform the required 50 iterations of the Game of Life, and the time required only by the `MPI_Scatterv` function in each repetition. 
 
@@ -416,36 +410,27 @@ Then we computed the speedup considering the overall time and the time without c
 ```{r, echo=F}
 library(ggplot2)
 library(plyr)
-dataset <- read.table("~/Scrivania/robe/graph 3 - MPI - scatter.dat", quote="\"", comment.char="")
+dataset <- read.table("graph 3 - MPI - scatter.dat", quote="\"", comment.char="")
 colnames(dataset) <- c("SCATTER", "TASKS", "TIME")
 dataset$DIFF <- dataset$TIME - dataset$SCATTER
-
 dataset1 <- ddply(dataset, .(TASKS), summarize, TIME = mean(TIME))
 dataset1 <- cbind(dataset1, rep("WITH", each=128))
 dataset2 <- ddply(dataset, .(TASKS), summarize, DIFF = mean(DIFF))
 dataset2 <- cbind(dataset2, rep("WITHOUT", each=128))
-
-
 temp_TIME1 <- dataset1$TIME
 SPEEDUP1 <- c()
-
 temp_TIME2 <- dataset2$DIFF
 SPEEDUP2 <- c()
-
 for(i in 1:128){
   SPEEDUP1[i] <- temp_TIME1[1]/temp_TIME1[i]
   SPEEDUP2[i] <- temp_TIME2[1]/temp_TIME2[i]
 }
-
 dataset1 <- cbind(dataset1, SPEEDUP1)
 dataset2 <- cbind(dataset2, SPEEDUP2)
-
 colnames(dataset1) = c("TASKS", "TIME", "SCATTER", "SPEEDUP")
 colnames(dataset2) = c("TASKS", "TIME", "SCATTER", "SPEEDUP")
-
 dataset_new <- rbind(dataset1, dataset2)
 dataset_new$SCATTER <- as.factor(dataset_new$SCATTER)
-
 plot_scatter <- ggplot(dataset_new, aes(x=TASKS, y=SPEEDUP, color=SCATTER)) + geom_line() + geom_point()
 plot_scatter + ggtitle("MPI TASKS AND SPEEDUP") + xlab("Number of MPI tasks") + ylab("SPEEDUP") + scale_x_continuous(breaks=seq(0,300,15)) + geom_abline(intercept = 0, slope = 1, color="red", 
                  linetype="dashed")
@@ -463,11 +448,10 @@ Below, a graph that compares
 
 
 ```{r, echo=F}
-noscatterdata <- read.table("~/Scrivania/robe/graph 4 - MPI - noscatter.dat", quote="\"", comment.char="")
+noscatterdata <- read.table("graph 4 - MPI - noscatter.dat", quote="\"", comment.char="")
 noscatterdata <- cbind(noscatterdata, rep("NO SCATTER", each=509))
 colnames(noscatterdata) <- c("TASKS", "TIME2", "TIME", "SCATTER")
 noscatterdata <- ddply(noscatterdata, .(TASKS, SCATTER), summarize, TIME = mean(TIME))
-
 temp_TIME <- noscatterdata$TIME
 SPEEDUP <- c()
 for(i in 1:128){
@@ -475,14 +459,11 @@ for(i in 1:128){
 }
 noscatterdata <- cbind(noscatterdata, SPEEDUP)
 colnames(noscatterdata) <- c("TASKS", "SCATTER", "TIME", "SPEEDUP")
-
 ####################################################################################################################
-
-scatterdata <- read.table("~/Scrivania/robe/graph 3 - MPI - scatter.dat", quote="\"", comment.char="")
+scatterdata <- read.table("graph 3 - MPI - scatter.dat", quote="\"", comment.char="")
 scatterdata <- cbind(scatterdata, rep("SCATTER", each=512))
 colnames(scatterdata) <- c("TIMEs", "TASKS", "TIME", "SCATTER")
 scatterdata <- ddply(scatterdata, .(TASKS, SCATTER), summarize, TIME = mean(TIME))
-
 temp_TIME <- scatterdata$TIME
 SPEEDUP <- c()
 for(i in 1:128){
@@ -490,12 +471,9 @@ for(i in 1:128){
 }
 scatterdata <- cbind(scatterdata, SPEEDUP)
 colnames(scatterdata) <- c("TASKS", "SCATTER", "TIME", "SPEEDUP")
-
 ####################################################################################################################
-
 merged_data <- rbind(noscatterdata, scatterdata)
 merged_data$SCATTER <- as.factor(merged_data$SCATTER)
-
 plot04 <- ggplot(merged_data, aes(x=TASKS, y=SPEEDUP, color=SCATTER)) + geom_line() + geom_point()
 plot04 + ggtitle("MPI TASKS AND SPEEDUP, 25.000x25.000 matrix") + xlab("Number of MPI tasks") + ylab("SPEEDUP") + scale_x_continuous(breaks=seq(0,260,15)) + geom_abline(intercept = 0, slope = 1, color="red", 
                  linetype="dashed")
@@ -504,11 +482,10 @@ plot04 + ggtitle("MPI TASKS AND SPEEDUP, 25.000x25.000 matrix") + xlab("Number o
 To make sure that the wiggly trend observed in the no-scatter version was just an unfortunate run, we repeated the benchmark with a 20.000x20.000 matrix:
 
 ```{r}
-noscatter25k <- read.table("~/Scrivania/robe/graph 4 - MPI - noscatter.dat", quote="\"", comment.char="")
+noscatter25k <- read.table("graph 4 - MPI - noscatter.dat", quote="\"", comment.char="")
 noscatter25k <- cbind(noscatter25k, rep("25k", each=509))
 colnames(noscatter25k) <- c("TASKS", "TIME2", "TIME", "DIM")
 noscatter25k <- ddply(noscatter25k, .(TASKS, DIM), summarize, TIME = mean(TIME))
-
 temp_TIME <- noscatter25k$TIME
 SPEEDUP <- c()
 for(i in 1:128){
@@ -516,14 +493,11 @@ for(i in 1:128){
 }
 noscatter25k <- cbind(noscatter25k, SPEEDUP)
 colnames(noscatter25k) <- c("TASKS", "DIM", "TIME", "SPEEDUP")
-
 ##############################################################################################################
-
-noscatter20k <- read.table("~/Scrivania/robe/graph 5 - MPI - noscatter.dat", quote="\"", comment.char="")
+noscatter20k <- read.table("graph 5 - MPI - noscatter.dat", quote="\"", comment.char="")
 noscatter20k <- cbind(noscatter20k, rep("20k", each=512))
 colnames(noscatter20k) <- c("TASKS", "TIME2", "TIME", "DIM")
 noscatter20k <- ddply(noscatter20k, .(TASKS, DIM), summarize, TIME = mean(TIME))
-
 temp_TIME <- noscatter20k$TIME
 SPEEDUP <- c()
 for(i in 1:128){
@@ -531,12 +505,9 @@ for(i in 1:128){
 }
 noscatter20k <- cbind(noscatter20k, SPEEDUP)
 colnames(noscatter20k) <- c("TASKS", "DIM", "TIME", "SPEEDUP")
-
 ###############################################################################################################
-
 merged_data <- rbind(noscatter25k, noscatter20k)
 merged_data$DIM <- as.factor(merged_data$DIM)
-
 plot05 <- ggplot(merged_data, aes(x=TASKS, y=SPEEDUP, color=DIM)) + geom_line() + geom_point()
 plot05 + ggtitle("MPI TASKS AND SPEEDUP, 20.000x20.000 and 25.000x25.000 matrices") + xlab("Number of MPI tasks") + ylab("SPEEDUP") + scale_x_continuous(breaks=seq(0,260,15)) + geom_abline(intercept = 0, slope = 1, color="red", 
                  linetype="dashed")
@@ -544,7 +515,7 @@ plot05 + ggtitle("MPI TASKS AND SPEEDUP, 20.000x20.000 and 25.000x25.000 matrice
 
 
 It seems that the first "gap" in correspondence of #MPI tasks = 59 is common above the 2 trials. 
-On the opposite, the greater downfall that can be observed for 25.000x25.000 matrices with almost 140 MPI tasks seems only to be an unfortunate measure. 
+On the opposite, the greater downfall that can be observed for 25.000x25.000 matrices with almost 140 MPI tasks seems only to be an unfortunate measure. (**what are you referring to?**)
 
 It is also clear that scalability improves with greater matrices. 
 
@@ -559,18 +530,16 @@ We consider the no-scatter version of `grow_static.c`.
 If we plot time needed with different MPI tasks and matrices sizes, in order to keep the workload constant, we obtain:
 
 ```{r}
-weak <- read.table("~/Scrivania/robe/graph 6 - weak.dat", quote="\"", comment.char="")
+weak <- read.table("graph 6 - weak.dat", quote="\"", comment.char="")
 colnames(weak) <- c("TASKS", "TIME1", "TIME")
-
 weak <- ddply(weak, .(TASKS), summarize, TIME = mean(TIME))
-
 plot_weak <- ggplot(weak, aes(x=TASKS, y=TIME)) + geom_line() + geom_point()
 plot_weak + ggtitle("WEAK MPI SCALABILITY") + xlab("Number of MPI tasks") + ylab("Time")+ ylim(0, 3) 
 ```
 
 Not so good graph.
 
-***non so cosa commentare***
+***non so cosa commentare EDIT: riproviamo i benchmark rivedendo il batch, eventualmente togliamo***
 
 
 
@@ -601,21 +570,18 @@ We set `OMP_PLACES=cores` and we repeated each trial for 10 times in order to ta
 #### Single precision
 
 ```{r, echo=F, message=F}
-data <- read.table("~/Scrivania/robe/graphs - DATA - HPC.dat", quote="\"", comment.char="", header = T)
+data <- read.table("graphs - DATA - HPC.dat", quote="\"", comment.char="", header = T)
 data$GFLOPS <- as.numeric(data$GFLOPS)
 data$LIBRARY <- as.factor(data$LIBRARY)
 data$PRECISION <- as.factor(data$PRECISION)
 data$POLICY <- as.factor(data$POLICY)
 data$SYNTH <- as.factor(data$SYNTH)
-
-
-data_NONE <- read.table("~/Scrivania/robe/graphs - DATA - HPC - NONE.dat", quote="\"", comment.char="")
+data_NONE <- read.table("graphs - DATA - HPC - NONE.dat", quote="\"", comment.char="")
 colnames(data_NONE) <- c("DIM", "TIME", "GFLOPS", "PRECISION", "POLICY", "SYNTH", "LIBRARY")
 data_NONE$LIBRARY <- as.factor(data_NONE$LIBRARY)
 data_NONE$PRECISION <- as.factor(data_NONE$PRECISION)
 data_NONE$POLICY <- as.factor(data_NONE$POLICY)
 data_NONE$SYNTH <- as.factor(data_NONE$SYNTH)
-
 data_NONE <- rbind(data[-4], data_NONE[-2])
 ```
 
@@ -771,7 +737,7 @@ A final note: we also tried the `none` policy, on its two declinations: `false` 
 In this second case, we kept the matrix size fixed (12000 x 12000) and we tried to scale over the number of cores (from 1 to 64). Also in this case we used `OMP_PLACES=cores` and we repeated each trial for 10 times and we took a mean of the results. 
 
 ```{r}
-data <- read.table("~/Scrivania/robe/graphs - DATA - HPC - 2.dat", quote="\"", comment.char="")
+data <- read.table("graphs - DATA - HPC - 2.dat", quote="\"", comment.char="")
 colnames(data) <- c("N_CORES", "PRECISION", "POLICY", "TIME", "GFLOPS", "SPEEDUP", "EFFICIENCY", "LIBRARY", "SYNTH")
 data$LIBRARY <- as.factor(data$LIBRARY)
 ```
@@ -827,7 +793,4 @@ EEDUP") + scale_y_continuous(breaks=seq(0,40,1)) + scale_x_continuous(breaks=seq
 ```
 
 Summarizing, OpenBLAS and MKL seem to behave very differently: while if we use OpenBLAS the binding policy seems to influence a lot the scalability (`close` policy seems to be more appropriate in general), with MKL this behavior doesn't seem to play a decisive role (although `close` policy still seems to be better in the single precision case).
-
-
-
 
