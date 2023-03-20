@@ -46,7 +46,7 @@ We chose to focus on the parallelization of the initialization of the world and 
 
 Our program works like this: 
 
-- if specified by the user in the command line through `-i` command, the world is initialized by `-np x` processes. This consists in subdividing the randomic generation of the rows of the matrix between all the processes. When all of them have finished, each set of lines is sent to process 0 who will be responsible of writing on a file. This is what does the file `w_init.c`.
+- if specified by the user in the command line through `-i` command, the world is initialized by `-np x` processes. This consists in subdividing the random generation of the rows of the matrix between all the processes. When all of them have finished, each set of lines is sent to process 0 who will be responsible of writing on a file. This is what does the file `w_init.c`.
 
 - if the user chooses to run an ordered evolution (`-r -e 0` or simply `-r`), this is simply executed in serial. This can be found in the file called `grow_ordered.c`),
 
@@ -72,7 +72,7 @@ Both the run functions take as inputs the file name, the number of iterations of
 
 ### World initialization: `w_init.c`
 
-In the `main` function, the function `choose_initialization` is called. This defines a `world` of size `size*size` and of type `unsigned char`. We preferred to use `char`s instead of integers or double or whatever because they belong to the smallest type that is able to contain both `0` and `255`, that are the outputs of `read_write_pgm.c` functions. 
+In the `main` function, the function `choose_initialization` is called. This defines a `world` of size `size*size` and of type `unsigned char`. We preferred to use `unsigned char`s instead of integers or double or whatever because they belong to the smallest type that is able to contain both `0` and `255`, that are the outputs of `read_write_pgm.c` functions. 
 
 
 Then, if the number of processes is greater than $1$, a parallel function will be called. Otherwise, the program will run a serial version of it. 
@@ -526,8 +526,32 @@ It is also clear that scalability improves with greater matrices.
 
 ## Weak MPI scalability 
 
-We consider the no-scatter version of `grow_static.c`.
-If we plot time needed with different MPI tasks and matrices sizes, in order to keep the workload constant, we obtain:
+In this section of the assignment, it was required to us to run the code by keeping the workload on each MPI process constant. 
+In the program, the workload is the overall matrix size, which needs to be divided between the MPI processes by giving to each of them a certain number of rows to evolve. 
+In this benchmark, we considered the no-scatter version of `grow_static.c`. 
+
+Given that $n$ is the number of elements in each row (i.e. the number of rows in the world matrix), we want that:
+$$
+\frac{n}{number\;of\;MPI\;processes} \cdot n = constant
+$$
+Starting from $n^2 = costant = 10.000^2$ and increasing the number of MPI processes involved, we obtain that with $m$ MPI processes, the `size` of the world should be: 
+$$
+n = 10.000 \cdot \sqrt{m}
+$$
+In other words, 
+
+
+  |# MPI processes|`size`| 
+  |:---:|:---:| 
+  |1|10.000|
+  |2|14.142|
+  |3|17.321|
+  |4|20.000|
+  |5|22.361|
+  |6|24.495|
+
+
+If we plot time needed with different MPI tasks and matrices sizes settings, we obtain:
 
 ```{r}
 weak <- read.table("graph 6 - weak.dat", quote="\"", comment.char="")
@@ -537,14 +561,26 @@ plot_weak <- ggplot(weak, aes(x=TASKS, y=TIME)) + geom_line() + geom_point()
 plot_weak + ggtitle("WEAK MPI SCALABILITY") + xlab("Number of MPI tasks") + ylab("Time")+ ylim(0, 3) 
 ```
 
-Not so good graph.
+The time needed to run the parallel Game of Life is almost constant, and the small but constant increase is easily explainable: by increasing the number of MPI processes, an additional communication overhead is introduced. 
 
-***non so cosa commentare EDIT: riproviamo i benchmark rivedendo il batch, eventualmente togliamo***
+
+
 
 
 
 ## Conclusions
-***DA SCRIVERE LUNEDI***
+
+In conclusion, we are quite satisfied by the overall results obtained by our code: the scalability is pretty good for both OpenMP and MPI. 
+
+As it is possible to observe, the speedup could be further improved by considering bigger matrices. 
+An higher number of iterations could also bring to better speedup. 
+
+
+From the strict point of view of the code, a clear improvement could be the use of MPI-IO to parallelize the read and write operations.
+
+
+
+
 
 #####################################################################################################
 
@@ -678,7 +714,6 @@ $$
 In the first case we analyzed (i.e. single precision with `spread` policy) we noticed that MKL had a huge decrease in performance for matrices with size greater than $7.000$. This is easily explainable considering the cache size: total cache size in a EPYC node is $584\;MiB$ ($512\;MiB$ of L3, ), that is equivalent to $612.368.384\;Bytes$. \
 The maximum size such that $3$ matrices with `float` entries can fit in that value is about $7.100$. We can deduct that from that value on, MKL needed to access the RAM in order to store the matrices entries, thus lowering the performances. 
 Since OpenBLAS didn't seem to suffer this problem from the tests that we did, we can suppose that it did a better usage of memory.
-*CONTROLLA PRIMA DI INSERIRLA: we can suppose that it did a different usage of memory, probably accessing directly to RAM (poor performance for small matrices could suggest this behaviour).* \
 
 When shifting to double precision (still using `spread` allocation policy), we observed a similar behavior but with different values: with the same calculations as before we can find that the maximum size such that $3$ matrices with `double` entries can fit the cache is about $5.000$, hence we expect from MKL the same behaviour as before. This is confirmed by data (we refer to the second graph). \
 
@@ -705,8 +740,7 @@ plot07 + ggtitle("MKL in single precision comparisons: different allocation poli
 ```
 
 From what we can observe, OpenBLAS manages the memory in a totally different way with respect to MKL in single precision. In fact, while the former has clearly better performances with the `close` policy than with the `spread` one, for the latter this is not so clear: if for medium size matrices (from $\approx5.000$ to $\approx11.000$) the `spread` policy seems to be the best choice, for smaller and bigger matrices it has a trend similar -and also slightly worse in some cases- to the other policies.
-
-*When we asked for 64 cores in a EPYC node with a `close` policy, we were asking the OS to place them in the same socket before considering other sockets' cores. If we go for `spread` policy instead, cores will be round-robin chosen across different cores in the socket. Since in an EPYC node we can found 2 sockets, twice of L3 cache will be available. This will help libraries with worse memory management.*
+When we asked for 64 cores in a EPYC node with a `close` policy, we were asking the OS to place them in the same socket before considering other sockets' cores. If we go for `spread` policy instead, cores will be round-robin chosen across different cores in the socket. Since in an EPYC node we can find 2 sockets, twice of L3 cache will be available. This will help libraries with worse memory management.
 
 
 ```{r,echo=FALSE}
@@ -728,7 +762,7 @@ plot08 + ggtitle("MKL in double precision comparisons: different allocation poli
 Switching to double precision, OpenBLAS seems to keep a trend similar to the previous case (`close` policy seems to be better than `spread`), even if the difference is less marked in this case, especially for relatively big matrices (from $size=15.000$ on). On the contrary, MKL seems to perform best with the `spread` policy in a much evident way than in the single precision case. \
 
 
-A final note: we also tried the `none` policy, on its two declinations: `false` and `true`. As a result, we obtained that if we let the OS migrate the threads by using the `false` policy, *this will result in a much worse usage of memory (serve spiegare perché)* and, consequently, worse performance (on average, they are worse than any other policy). If, on the contrary, we forbid the OS to migrate the threads, the result is (as we can see in the graphs above) a scaling that is basically equal to the `close` policy, both in single and in double precision for both the libraries.
+A final note: we also tried the `none` policy, on its two declinations: `false` and `true`. As a result, we obtained that if we let the OS migrate the threads by using the `false` policy, and this causes remarkably worse performances (on average, they are worse than any other policy). If, on the contrary, we forbid the OS to migrate the threads, the result is (as we can see in the graphs above) a scaling that is basically equal to the `close` policy, both in single and in double precision for both the libraries.
 
 
 
